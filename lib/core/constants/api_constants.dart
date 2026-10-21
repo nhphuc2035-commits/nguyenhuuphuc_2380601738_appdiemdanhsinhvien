@@ -1,5 +1,5 @@
 class ApiConstants {
-  static const String baseUrl = 'https://noble-courage-rear-lit.trycloudflare.com';
+  static const String baseUrl = 'https://carport-empty-pulp.ngrok-free.dev';
 
   // Headers
   static const Map<String, String> defaultHeaders = {
