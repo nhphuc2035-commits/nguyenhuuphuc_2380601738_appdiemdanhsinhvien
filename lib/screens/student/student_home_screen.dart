@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/student_provider.dart';
+import '../../models/lop_hoc_phan_model.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/date_formatter.dart';
 import '../../widgets/attendance_detail_modal.dart';
@@ -19,6 +20,8 @@ class StudentHomeScreen extends StatefulWidget {
 }
 
 class _StudentHomeScreenState extends State<StudentHomeScreen> {
+  int? _selectedLopId; // null = "Tất cả môn"
+
   @override
   void initState() {
     super.initState();
@@ -70,17 +73,32 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
     final student = Provider.of<StudentProvider>(context);
     final sv = auth.currentUser?.sinhVien;
 
-    final myHistory = student.myDiemDanhs;
-    // Môn học LTDD quy định 9 buổi
-    final totalCourseSessions = student.myLopHocPhans.isNotEmpty
-        ? (student.myLopHocPhans.first.soBuoi > 0 ? student.myLopHocPhans.first.soBuoi : 9)
+    final allHistory = student.myDiemDanhs;
+
+    // Tự động chọn lớp đầu tiên nếu chưa chọn
+    final effectiveLopId = _selectedLopId ?? (student.myLopHocPhans.isNotEmpty ? student.myLopHocPhans.first.id : null);
+
+    // Lớp học phần được chọn
+    final selectedLop = effectiveLopId != null
+        ? student.myLopHocPhans.firstWhere((l) => l.id == effectiveLopId, orElse: () => student.myLopHocPhans.first)
+        : null;
+
+    // Lọc lịch sử điểm danh theo đúng môn học đã chọn
+    final myHistory = selectedLop != null
+        ? allHistory.where((d) => (d.buoiDiemDanh?.lopHocPhanId == selectedLop.id || d.buoiDiemDanh?.lopHocPhan?.id == selectedLop.id)).toList()
+        : allHistory;
+
+    // Số buổi quy định theo môn học đó (ví dụ: LTDD 9 buổi, môn khác 15 buổi)
+    final totalCourseSessions = selectedLop != null
+        ? (selectedLop.soBuoi > 0 ? selectedLop.soBuoi : 9)
         : 9;
+
     final presentCount = myHistory.where((d) => d.trangThai.toLowerCase() == 'comat').length;
     final lateCount = myHistory.where((d) => d.trangThai.toLowerCase() == 'ditre').length;
     final unexcusedAbsentCount = myHistory.where((d) => d.trangThai.toLowerCase() == 'vangkhongphep').length;
     final excusedAbsentCount = myHistory.where((d) => d.trangThai.toLowerCase() == 'vangcophep').length;
 
-    // CHỈ VẮNG KHÔNG PHÉP MỚI TÍNH VÀO TỶ LỆ CẤM THI!
+    // CHỈ VẮNG KHÔNG PHÉP CỦA MÔN ĐÓ MỚI TÍNH VÀO TỶ LỆ CẤM THI CỦA MÔN ĐÓ!
     final banRate = totalCourseSessions > 0 ? (unexcusedAbsentCount / totalCourseSessions * 100.0) : 0.0;
 
     return Scaffold(
@@ -200,8 +218,67 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
 
               const SizedBox(height: 14),
 
-              // 2. EXAM BAN RADAR ALERT CARD
+              // 2. DROPDOWN CHỌN MÔN HỌC để lọc cảnh báo cấm thi
+              if (student.myLopHocPhans.isNotEmpty)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFBFDBFE), width: 1.2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.03),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.school_rounded, color: AppTheme.primaryColor, size: 20),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Môn học:',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<int?>(
+                            value: effectiveLopId,
+                            isDense: true,
+                            isExpanded: true,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: AppTheme.primaryColor,
+                            ),
+                            items: student.myLopHocPhans.map((lop) {
+                              return DropdownMenuItem<int?>(
+                                value: lop.id,
+                                child: Text(
+                                  '${lop.maLopHocPhan} - ${lop.monHoc?.tenMon ?? lop.maLopHocPhan} (${lop.soBuoi} buổi)',
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              );
+                            }).toList(),
+                            onChanged: (val) {
+                              if (val != null) {
+                                setState(() => _selectedLopId = val);
+                              }
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // 3. EXAM BAN RADAR ALERT CARD
               _buildExamBanWarningCard(
+                selectedLop: selectedLop,
                 unexcusedAbsentCount: unexcusedAbsentCount,
                 excusedAbsentCount: excusedAbsentCount,
                 lateCount: lateCount,
@@ -522,6 +599,7 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
 
   /// Interactive Exam Ban Warning Card
   Widget _buildExamBanWarningCard({
+    LopHocPhan? selectedLop,
     required int unexcusedAbsentCount,
     required int excusedAbsentCount,
     required int lateCount,
@@ -536,41 +614,43 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
     String subtitle;
     String advice;
 
+    final courseName = selectedLop?.monHoc?.tenMon ?? selectedLop?.maLopHocPhan ?? 'Học phần';
+
     if (banRate >= 20.0) {
-      // CẤM THI CHÍNH THỨC (>= 2 buổi không phép / 9 buổi = 22.2%)
+      // CẤM THI CHÍNH THỨC (>= 20%)
       cardBg = const Color(0xFFFEF2F2);
       borderColor = const Color(0xFFFCA5A5);
       textColor = const Color(0xFF991B1B);
       icon = Icons.block_rounded;
-      title = 'CẤM THI CHÍNH THỨC! (Vắng không phép ${banRate.toStringAsFixed(1)}% >= 20%)';
-      subtitle = 'Đã vắng $unexcusedAbsentCount/$totalCourseSessions buổi không phép.';
-      advice = 'Không đủ điều kiện dự thi kết thúc học phần theo Quy chế tín chỉ HUTECH.';
+      title = 'CẤM THI: $courseName (Vắng KP ${banRate.toStringAsFixed(1)}% >= 20%)';
+      subtitle = 'Đã vắng $unexcusedAbsentCount/$totalCourseSessions buổi không phép của môn này.';
+      advice = 'Không đủ điều kiện dự thi môn $courseName theo Quy chế tín chỉ HUTECH.';
     } else if (unexcusedAbsentCount >= 1) {
-      // BÁO ĐỘNG NGUY CƠ (Vắng 1 buổi không phép / 9 buổi = 11.1%)
+      // BÁO ĐỘNG NGUY CƠ (>= 1 buổi không phép)
       cardBg = const Color(0xFFFFFBEB);
       borderColor = const Color(0xFFFCD34D);
       textColor = const Color(0xFF92400E);
       icon = Icons.warning_amber_rounded;
-      title = 'BÁO ĐỘNG NGUY CƠ CẤM THI! (Vắng KP ${banRate.toStringAsFixed(1)}%)';
-      subtitle = 'Đã vắng $unexcusedAbsentCount/$totalCourseSessions buổi không phép${excusedAbsentCount > 0 ? " (Có $excusedAbsentCount buổi nghỉ có phép đã duyệt)" : ""}.';
-      advice = 'CHỈ CÒN ĐƯỢC VẮNG 0 BUỔI! Học phần 9 buổi nếu vắng thêm 1 buổi không phép (tổng 2 buổi = 22.2%) sẽ bị CẤM THI.';
+      title = 'BÁO ĐỘNG: $courseName (Vắng KP ${banRate.toStringAsFixed(1)}%)';
+      subtitle = 'Đã vắng $unexcusedAbsentCount/$totalCourseSessions buổi không phép${excusedAbsentCount > 0 ? " (Có $excusedAbsentCount buổi nghỉ có phép)" : ""}.';
+      advice = 'CHỈ CÒN ĐƯỢC VẮNG 0 BUỔI! Môn $courseName ($totalCourseSessions buổi) nếu vắng thêm 1 buổi KP sẽ bị CẤM THI.';
     } else if (lateCount > 0) {
       // ĐI TRỄ
       cardBg = const Color(0xFFFEFCE8);
       borderColor = const Color(0xFFFDE047);
       textColor = const Color(0xFF854D0E);
       icon = Icons.access_time_rounded;
-      title = 'Cần Lưu Ý: Đã Có $lateCount Buổi Đi Trễ';
+      title = '$courseName: Có $lateCount Buổi Đi Trễ';
       subtitle = 'Điểm danh sau 07:30 ca sáng / sau 12:30 ca chiều.';
-      advice = 'Hãy sắp xếp đi học đúng giờ để bảo đảm điểm rèn luyện và chuyên cần.';
+      advice = 'Hãy sắp xếp đi học môn $courseName đúng giờ để bảo đảm điểm rèn luyện và chuyên cần.';
     } else {
       // 100% ĐÚNG GIỜ
       cardBg = const Color(0xFFF0FDF4);
       borderColor = const Color(0xFF86EFAC);
       textColor = const Color(0xFF166534);
       icon = Icons.verified_rounded;
-      title = 'Chuyên Cần Xuất Sắc: 100% Đúng Giờ';
-      subtitle = 'Chưa có buổi nào vắng hoặc đi trễ.';
+      title = '$courseName: 100% Đúng Giờ';
+      subtitle = 'Chưa có buổi nào vắng hoặc đi trễ ở môn này.';
       advice = 'Đủ 100% điều kiện tham gia kỳ thi kết thúc học phần.';
     }
 
@@ -593,7 +673,9 @@ class _StudentHomeScreenState extends State<StudentHomeScreen> {
           onTap: () {
             Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const StudentRiskWarningScreen()),
+              MaterialPageRoute(
+                builder: (_) => StudentRiskWarningScreen(initialLopId: selectedLop?.id),
+              ),
             );
           },
           borderRadius: BorderRadius.circular(16),

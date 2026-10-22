@@ -2,10 +2,26 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/student_provider.dart';
+import '../../models/lop_hoc_phan_model.dart';
 import '../../core/theme/app_theme.dart';
 
-class StudentRiskWarningScreen extends StatelessWidget {
-  const StudentRiskWarningScreen({super.key});
+class StudentRiskWarningScreen extends StatefulWidget {
+  final int? initialLopId;
+
+  const StudentRiskWarningScreen({super.key, this.initialLopId});
+
+  @override
+  State<StudentRiskWarningScreen> createState() => _StudentRiskWarningScreenState();
+}
+
+class _StudentRiskWarningScreenState extends State<StudentRiskWarningScreen> {
+  int? _selectedLopId;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedLopId = widget.initialLopId;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -13,16 +29,32 @@ class StudentRiskWarningScreen extends StatelessWidget {
     final student = Provider.of<StudentProvider>(context);
     final sv = auth.currentUser?.sinhVien;
 
-    final myHistory = student.myDiemDanhs;
+    // Tự động gán môn học đầu tiên nếu chưa chọn
+    if (_selectedLopId == null && student.myLopHocPhans.isNotEmpty) {
+      _selectedLopId = student.myLopHocPhans.first.id;
+    }
+
+    final LopHocPhan? selectedLop = _selectedLopId != null && student.myLopHocPhans.any((l) => l.id == _selectedLopId)
+        ? student.myLopHocPhans.firstWhere((l) => l.id == _selectedLopId)
+        : (student.myLopHocPhans.isNotEmpty ? student.myLopHocPhans.first : null);
+
+    final allHistory = student.myDiemDanhs;
+
+    // Lọc lịch sử điểm danh theo đúng môn học đã chọn (tách biệt từng môn, không gộp chung)
+    final myHistory = selectedLop != null
+        ? allHistory.where((d) => (d.buoiDiemDanh?.lopHocPhanId == selectedLop.id || d.buoiDiemDanh?.lopHocPhan?.id == selectedLop.id)).toList()
+        : allHistory;
+
     final unexcusedAbsentCount = myHistory.where((d) => d.trangThai.toLowerCase() == 'vangkhongphep').length;
     final excusedAbsentCount = myHistory.where((d) => d.trangThai.toLowerCase() == 'vangcophep').length;
     final lateCount = myHistory.where((d) => d.trangThai.toLowerCase() == 'ditre').length;
     final presentCount = myHistory.where((d) => d.trangThai.toLowerCase() == 'comat').length;
 
-    // Quy định học phần LTDD: 9 buổi
-    const constTotalBuoi = 9;
-    // CHỈ VẮNG KHÔNG PHÉP MỚI TÍNH VÀO TỶ LỆ CẤM THI (VẮNG CÓ PHÉP KHÔNG BỊ TRỪ)
-    final absencePercent = (unexcusedAbsentCount / constTotalBuoi * 100.0);
+    // Quy định số buổi theo môn học (LTDD: 9 buổi, môn khác: theo số buổi cấu hình)
+    final constTotalBuoi = selectedLop != null ? (selectedLop.soBuoi > 0 ? selectedLop.soBuoi : 9) : 9;
+
+    // CHỈ VẮNG KHÔNG PHÉP MỚI TÍNH VÀO TỶ LỆ CẤM THI CỦA MÔN NÀY (VẮNG CÓ PHÉP KHÔNG BỊ TRỪ)
+    final absencePercent = constTotalBuoi > 0 ? (unexcusedAbsentCount / constTotalBuoi * 100.0) : 0.0;
     final isBanned = absencePercent >= 20.0;
     final isDanger = !isBanned && unexcusedAbsentCount >= 1;
     final isLateOnly = !isBanned && !isDanger && unexcusedAbsentCount == 0 && lateCount > 0;
@@ -36,8 +68,10 @@ class StudentRiskWarningScreen extends StatelessWidget {
     final statusText = isBanned
         ? 'CẤM THI HỌC PHẦN (>= 20%)'
         : (isDanger
-            ? 'BÁO ĐỘNG NGUY CƠ (11.1%)'
+            ? 'BÁO ĐỘNG NGUY CƠ (${absencePercent.toStringAsFixed(1)}%)'
             : (isLateOnly ? 'LƯU Ý CÁC BUỔI ĐI TRỄ' : 'CHUYÊN CẦN XUẤT SẮC'));
+
+    final courseName = selectedLop?.monHoc?.tenMon ?? selectedLop?.maLopHocPhan ?? 'Học phần';
 
     return Scaffold(
       appBar: AppBar(
@@ -47,7 +81,7 @@ class StudentRiskWarningScreen extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Column(
           children: [
-            // Student Info Card
+            // 1. Student Info Card
             Card(
               elevation: 2,
               shape: RoundedRectangleBorder(
@@ -114,9 +148,90 @@ class StudentRiskWarningScreen extends StatelessWidget {
               ),
             ),
 
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
 
-            // Risk Gauge Card
+            // 2. Course Selector Dropdown Card (Phân ra từng môn)
+            Card(
+              elevation: 2,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.school_rounded, color: AppTheme.primaryColor, size: 20),
+                        SizedBox(width: 8),
+                        Text(
+                          'Chọn Môn Học Cần Khảo Sát:',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    if (student.myLopHocPhans.isEmpty)
+                      const Text('Chưa có danh sách lớp học phần.', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13))
+                    else
+                      DropdownButtonFormField<int>(
+                        value: _selectedLopId,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          prefixIcon: Icon(Icons.class_rounded, color: AppTheme.primaryColor),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        ),
+                        items: student.myLopHocPhans.map((lop) {
+                          return DropdownMenuItem<int>(
+                            value: lop.id,
+                            child: Text(
+                              '${lop.maLopHocPhan} - ${lop.monHoc?.tenMon ?? lop.maLopHocPhan} (${lop.soBuoi} buổi)',
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (val) {
+                          if (val != null) {
+                            setState(() => _selectedLopId = val);
+                          }
+                        },
+                      ),
+                    if (selectedLop != null) ...[
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEFF6FF),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: const Color(0xFFBFDBFE)),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'GV: ${selectedLop.giangVien ?? "Chưa phân công"}',
+                              style: const TextStyle(fontSize: 11.5, color: Color(0xFF1E40AF), fontWeight: FontWeight.w600),
+                            ),
+                            Text(
+                              'Phòng: ${selectedLop.phongHoc ?? "E1-04.05"}',
+                              style: const TextStyle(fontSize: 11.5, color: Color(0xFF1E40AF)),
+                            ),
+                            Text(
+                              'Quy định: $constTotalBuoi buổi',
+                              style: const TextStyle(fontSize: 11.5, color: Color(0xFF1E40AF), fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // 3. Risk Gauge Card for Selected Course
             Card(
               elevation: 2,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -124,9 +239,15 @@ class StudentRiskWarningScreen extends StatelessWidget {
                 padding: const EdgeInsets.all(18),
                 child: Column(
                   children: [
-                    const Text(
-                      'Tỷ Lệ Vắng Học Phần (Quy chế: 9 buổi)',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    Text(
+                      'Tỷ Lệ Vắng Môn: $courseName',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14.5),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Quy định học phần: $constTotalBuoi buổi (Cấm thi khi vắng KP ≥ 20%)',
+                      style: const TextStyle(fontSize: 11.5, color: AppTheme.textSecondary),
                     ),
                     const SizedBox(height: 16),
                     Stack(
@@ -154,7 +275,7 @@ class StudentRiskWarningScreen extends StatelessWidget {
                               ),
                             ),
                             Text(
-                              'Tỷ lệ vắng',
+                              'Tỷ lệ vắng KP',
                               style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
                             ),
                           ],
@@ -178,9 +299,120 @@ class StudentRiskWarningScreen extends StatelessWidget {
               ),
             ),
 
+            // 4. Breakdown Table of ALL courses ("Môn nào cấm, môn nào không")
+            if (student.myLopHocPhans.length > 1) ...[
+              const SizedBox(height: 14),
+              Card(
+                elevation: 2,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.assessment_rounded, color: AppTheme.primaryColor, size: 20),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Phân Loại Cấm Thi Từng Môn Học (${student.myLopHocPhans.length} Môn):',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: student.myLopHocPhans.length,
+                        separatorBuilder: (_, __) => const Divider(height: 12),
+                        itemBuilder: (context, index) {
+                          final lop = student.myLopHocPhans[index];
+                          final isCurrent = lop.id == _selectedLopId;
+                          final lopHistory = allHistory.where((d) => (d.buoiDiemDanh?.lopHocPhanId == lop.id || d.buoiDiemDanh?.lopHocPhan?.id == lop.id)).toList();
+                          final lopVang = lopHistory.where((d) => d.trangThai.toLowerCase() == 'vangkhongphep').length;
+                          final lopTotal = lop.soBuoi > 0 ? lop.soBuoi : 9;
+                          final lopRate = lopTotal > 0 ? (lopVang / lopTotal * 100.0) : 0.0;
+                          final isLopBanned = lopRate >= 20.0;
+                          final isLopDanger = !isLopBanned && lopVang >= 1;
+                          final lopBadgeColor = isLopBanned
+                              ? AppTheme.dangerColor
+                              : (isLopDanger ? const Color(0xFFD97706) : AppTheme.successColor);
+                          final lopBadgeText = isLopBanned ? 'CẤM THI' : (isLopDanger ? 'BÁO ĐỘNG' : 'AN TOÀN');
+
+                          return InkWell(
+                            onTap: () {
+                              setState(() => _selectedLopId = lop.id);
+                            },
+                            borderRadius: BorderRadius.circular(10),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: isCurrent ? AppTheme.primaryColor.withOpacity(0.06) : Colors.transparent,
+                                borderRadius: BorderRadius.circular(10),
+                                border: isCurrent ? Border.all(color: AppTheme.primaryColor.withOpacity(0.35)) : null,
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    isLopBanned ? Icons.block_rounded : (isLopDanger ? Icons.warning_amber_rounded : Icons.check_circle_rounded),
+                                    color: lopBadgeColor,
+                                    size: 20,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          '${lop.maLopHocPhan} - ${lop.monHoc?.tenMon ?? "Môn học"}',
+                                          style: TextStyle(
+                                            fontWeight: isCurrent ? FontWeight.bold : FontWeight.w600,
+                                            fontSize: 12.5,
+                                            color: isCurrent ? AppTheme.primaryColor : AppTheme.textPrimary,
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'Vắng KP: $lopVang/$lopTotal buổi (${lopRate.toStringAsFixed(1)}%) • GV: ${lop.giangVien ?? "N/A"}',
+                                          style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: lopBadgeColor.withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(color: lopBadgeColor.withOpacity(0.3)),
+                                    ),
+                                    child: Text(
+                                      lopBadgeText,
+                                      style: TextStyle(
+                                        color: lopBadgeColor,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 10,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+
             const SizedBox(height: 14),
 
-            // Academic Rules & Advisory Card
+            // 5. Academic Rules & Advisory Card
             Card(
               color: const Color(0xFFF8FAFC),
               elevation: 1.5,
@@ -204,15 +436,15 @@ class StudentRiskWarningScreen extends StatelessWidget {
                       ],
                     ),
                     const Divider(height: 18),
-                    _buildRuleItem('≥ 20% (≥ 2 buổi):', 'Bị CẤM THI học phần theo Quy chế đào tạo tín chỉ HUTECH.'),
+                    _buildRuleItem('≥ 20% số buổi:', 'Bị CẤM THI học phần theo Quy chế đào tạo tín chỉ HUTECH.'),
                     const SizedBox(height: 8),
-                    _buildRuleItem('11.1% (1 buổi):', 'BÁO ĐỘNG NGUY CƠ, sinh viên chỉ còn được phép vắng thêm tối đa 0 buổi.'),
+                    _buildRuleItem('Báo động nguy cơ:', 'Đã vắng 1 buổi không phép, chỉ còn được vắng tối đa 0 buổi.'),
                     const SizedBox(height: 8),
                     _buildRuleItem('0 buổi vắng:', 'ĐỦ ĐIỀU KIỆN 100% tham gia kỳ thi kết thúc học phần.'),
                     const SizedBox(height: 8),
                     _buildRuleItem('Điểm danh đúng giờ:', 'Ca sáng trước 07:30 • Ca chiều trước 12:30. Sau giờ đó là đi trễ.'),
                     const SizedBox(height: 8),
-                    _buildRuleItem('Vị trí phòng học:', 'Có mặt tại cơ sở HUTECH Thủ Đức (E1-04.05). Điểm danh sai vị trí sẽ bị ghi nhận Vắng.'),
+                    _buildRuleItem('Vị trí phòng học:', 'Có mặt tại cơ sở HUTECH (E1-04.05). Điểm danh sai vị trí sẽ bị ghi nhận Vắng.'),
                     const Divider(height: 18),
                     Container(
                       padding: const EdgeInsets.all(10),
@@ -228,7 +460,7 @@ class StudentRiskWarningScreen extends StatelessWidget {
                           SizedBox(width: 8),
                           Expanded(
                             child: Text(
-                              'Lưu ý: Nếu ốm đau hoặc việc đột xuất, hãy nộp ngay "Đơn xin nghỉ phép" kèm ảnh chụp giấy khám bệnh để giảng viên duyệt và không bị tính vào tỷ lệ cấm thi!',
+                              'Lưu ý: Nếu ốm đau hoặc có việc đột xuất, hãy nộp ngay "Đơn xin nghỉ phép" kèm ảnh chụp giấy khám bệnh để giảng viên duyệt và không bị tính vào tỷ lệ cấm thi!',
                               style: TextStyle(fontSize: 11.5, color: Color(0xFF92400E), height: 1.3),
                             ),
                           ),
