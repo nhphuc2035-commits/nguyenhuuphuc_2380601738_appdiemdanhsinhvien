@@ -8,6 +8,29 @@ class LocationService {
   static const double defaultLat = 10.8558;
   static const double defaultLng = 106.7853;
 
+  // HUTECH Campuses
+  static const double hutechKhuELat = 10.8558; // Khu E Thủ Đức
+  static const double hutechKhuELng = 106.7853;
+  static const double hutechBinhThanhLat = 10.8018; // Trụ sở Điện Biên Phủ
+  static const double hutechBinhThanhLng = 106.7142;
+
+  // Bán kính ngắn trong khuôn viên trường: 200 mét
+  static const double maxCampusRadiusMeters = 200.0;
+
+  /// Kiểm tra xem vị trí GPS có nằm trong khuôn viên trường HUTECH (bán kính ngắn <= 200m) hay không
+  static bool isInsideHutechCampus(double lat, double lng, {double maxRadius = maxCampusRadiusMeters}) {
+    final distKhuE = calculateDistanceMeters(lat, lng, hutechKhuELat, hutechKhuELng);
+    final distBinhThanh = calculateDistanceMeters(lat, lng, hutechBinhThanhLat, hutechBinhThanhLng);
+    return distKhuE <= maxRadius || distBinhThanh <= maxRadius;
+  }
+
+  /// Tính khoảng cách ngắn nhất đến cơ sở HUTECH gần nhất (mét)
+  static double getDistanceToHutech(double lat, double lng) {
+    final distKhuE = calculateDistanceMeters(lat, lng, hutechKhuELat, hutechKhuELng);
+    final distBinhThanh = calculateDistanceMeters(lat, lng, hutechBinhThanhLat, hutechBinhThanhLng);
+    return min(distKhuE, distBinhThanh);
+  }
+
   /// Get current GPS position with permission checks and safe fallback
   static Future<Position?> getCurrentPosition() async {
     try {
@@ -56,19 +79,24 @@ class LocationService {
 
   /// Get readable physical street address from GPS coordinates (No spoofing, real-time)
   static Future<String> getAddressFromCoordinates(double lat, double lng) async {
-    // 1. Check known landmark proximity
-    final distToHutechKhuE = calculateDistanceMeters(lat, lng, 10.8558, 106.7853);
-    if (distToHutechKhuE <= 400) {
+    // 1. Check known landmark proximity (Bán kính khuôn viên trường <= 200m)
+    final distToHutechKhuE = calculateDistanceMeters(lat, lng, hutechKhuELat, hutechKhuELng);
+    if (distToHutechKhuE <= maxCampusRadiusMeters) {
       return 'Trường ĐH HUTECH - Khu E (Phân hiệu Thủ Đức), Đường D1, P. Long Thạnh Mỹ, TP. Thủ Đức';
     }
 
+    final distToHutechBinhThanh = calculateDistanceMeters(lat, lng, hutechBinhThanhLat, hutechBinhThanhLng);
+    if (distToHutechBinhThanh <= maxCampusRadiusMeters) {
+      return 'Trường ĐH HUTECH - Trụ sở 475A Điện Biên Phủ, P. 25, Q. Bình Thạnh, TP. HCM';
+    }
+
     final distToVincomThuDuc = calculateDistanceMeters(lat, lng, 10.8510, 106.7720);
-    if (distToVincomThuDuc <= 400) {
+    if (distToVincomThuDuc <= 200) {
       return 'Vincom Plaza Thủ Đức, 216 Võ Văn Ngân, P. Bình Thọ, TP. Thủ Đức';
     }
 
     final distToVivoCity = calculateDistanceMeters(lat, lng, 10.7305, 106.7020);
-    if (distToVivoCity <= 400) {
+    if (distToVivoCity <= 200) {
       return 'SC VivoCity, 1058 Nguyễn Văn Linh, P. Tân Phong, Quận 7, TP. HCM';
     }
 
